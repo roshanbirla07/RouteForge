@@ -1,0 +1,16 @@
+# C++ binaries
+*.exe
+*.out
+*.o
+
+cpp-engine/build/
+
+# Node.js
+node_modules/
+
+# Logs
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
