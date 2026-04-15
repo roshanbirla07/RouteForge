@@ -82,14 +82,17 @@ string extractString(const string& text, const string& key, const string& fallba
 
 Graph buildGraph(const string& text, int vertices, bool undirected) {
     Graph graph(vertices);
-    const regex edge_pattern(
-        R"(\{\s*"from"\s*:\s*(-?\d+)\s*,\s*"to"\s*:\s*(-?\d+)\s*,\s*"weight"\s*:\s*(-?\d+)\s*\})");
+    const regex edge_pattern(R"(\[\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\])");
 
     for (sregex_iterator it(text.begin(), text.end(), edge_pattern), end; it != end; ++it) {
-        const int from = std::stoi((*it)[1].str());
-        const int to = std::stoi((*it)[2].str());
-        const int weight = std::stoi((*it)[3].str());
-        graph.addEdge(from, to, weight, undirected);
+        const int u = std::stoi((*it)[1].str());
+        const int v = std::stoi((*it)[2].str());
+        const int w = std::stoi((*it)[3].str());
+        graph.addEdge(u, v, w);
+
+        if (undirected) {
+            graph.addEdge(v, u, w, false);
+        }
     }
 
     return graph;

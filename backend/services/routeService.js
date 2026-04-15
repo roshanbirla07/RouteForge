@@ -17,29 +17,86 @@ const execAsync = (command, options) =>
   });
 
 const projectRoot = path.resolve(__dirname, '..', '..');
-const inputFilePath = path.join(projectRoot, 'input', 'input.json');
-const resultFilePath = path.join(projectRoot, 'output', 'result.json');
-const buildDirectory = path.join(projectRoot, 'build');
+const engineRoot = path.join(projectRoot, 'cpp-engine');
+const inputFilePath = path.join(engineRoot, 'input', 'input.json');
+const resultFilePath = path.join(engineRoot, 'output', 'result.json');
+const buildDirectory = path.join(engineRoot, 'build');
 const binaryPath = path.join(buildDirectory, process.platform === 'win32' ? 'route_planner.exe' : 'route_planner');
 
-async function runRoutePlanner({ source, destination, algorithm }) {
-  let inputConfig;
+function createValidationError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
 
-  try {
-    const inputContent = await fs.readFile(inputFilePath, 'utf8');
-    inputConfig = JSON.parse(inputContent);
-  } catch (error) {
-    error.message = `Failed to read ${inputFilePath}: ${error.message}`;
-    error.statusCode = 500;
-    throw error;
+function normalizeEdges(edges, vertices) {
+  return edges.map((edge, index) => {
+    if (!Array.isArray(edge) || edge.length !== 3) {
+      throw createValidationError('edges must be [[u,v,w]] format');
+    }
+
+    const [from, to, weight] = edge;
+
+    if (!Number.isInteger(from) || !Number.isInteger(to) || !Number.isInteger(weight)) {
+      throw createValidationError('edges must be [[u,v,w]] format');
+    }
+
+    if (from < 0 || from >= vertices || to < 0 || to >= vertices) {
+      throw createValidationError(`edges[${index}] contains a node outside the vertices range`);
+    }
+
+    return [from, to, weight];
+  });
+}
+
+async function runRoutePlanner({
+  vertices,
+  edges,
+  source,
+  destination,
+  algorithm,
+  undirected = true
+}) {
+  if (!Number.isInteger(vertices) || vertices <= 0) {
+    throw createValidationError('vertices must be a positive integer');
+  }
+
+  if (!Array.isArray(edges)) {
+    throw createValidationError('edges must be an array');
+  }
+
+  if (!Number.isInteger(source) || !Number.isInteger(destination)) {
+    throw createValidationError('source and destination must be integers');
+  }
+
+  if (source < 0 || source >= vertices || destination < 0 || destination >= vertices) {
+    throw createValidationError('source and destination must be within the vertices range');
+  }
+
+  if (!['dijkstra', 'astar'].includes(algorithm)) {
+    throw createValidationError('algorithm must be either "dijkstra" or "astar"');
+  }
+
+  if (typeof undirected !== 'boolean') {
+    throw createValidationError('undirected must be a boolean');
   }
 
   const nextInput = {
-    ...inputConfig,
+    vertices,
+    edges: normalizeEdges(edges, vertices),
     source,
     destination,
-    algorithm
+    algorithm,
+    undirected
   };
+
+  try {
+    await fs.access(binaryPath);
+  } catch (error) {
+    const binaryError = new Error(`Route planner binary not found at ${binaryPath}`);
+    binaryError.statusCode = 500;
+    throw binaryError;
+  }
 
   try {
     await fs.writeFile(inputFilePath, JSON.stringify(nextInput, null, 2));
