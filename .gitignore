@@ -1,12 +1,17 @@
-# C++ binaries
+# Node.js
+**/node_modules/
+frontend/dist/
+
+# Backend environment files
+backend/.env
+backend/.env.*
+
+# C++ build and runtime output
+cpp-engine/build/
+cpp-engine/output/
 *.exe
 *.out
 *.o
-
-cpp-engine/build/
-
-# Node.js
-node_modules/
 
 # Logs
 *.log

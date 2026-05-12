@@ -1,71 +1,20 @@
-import { useMemo, useState } from 'react';
-import GraphCanvas from './components/GraphCanvas';
+import { ReactFlowProvider } from '@xyflow/react';
+import GraphEditor from './components/GraphEditor';
+import { useRouteAnimator } from './hooks/useRouteAnimator';
 import { forgeRoute } from './api/routeApi';
+import { buildRouteRequest, mapRouteResponse, useGraphStore } from './store/useGraphStore';
 
-function createEdgeId(from, to) {
-  return [Math.min(from, to), Math.max(from, to)].join('-');
-}
+function GraphWorkspace() {
+  const nodes = useGraphStore((state) => state.nodes);
+  const edges = useGraphStore((state) => state.edges);
+  const sourceId = useGraphStore((state) => state.sourceId);
+  const destinationId = useGraphStore((state) => state.destinationId);
+  const algorithm = useGraphStore((state) => state.algorithm);
+  const setLoading = useGraphStore((state) => state.setLoading);
+  const setError = useGraphStore((state) => state.setError);
+  const setRouteResult = useGraphStore((state) => state.setRouteResult);
 
-function formatPath(path) {
-  return Array.isArray(path) && path.length ? path.join(' -> ') : 'No path returned';
-}
-
-export default function App() {
-  const [nodes, setNodes] = useState([]);
-  const [edges, setEdges] = useState([]);
-  const [source, setSource] = useState('');
-  const [destination, setDestination] = useState('');
-  const [algorithm, setAlgorithm] = useState('dijkstra');
-  const [routeResult, setRouteResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const nodeOptions = useMemo(
-    () => nodes.map((node) => ({ value: node.id, label: `Node ${node.id}` })),
-    [nodes]
-  );
-
-  function handleAddNode(position) {
-    setNodes((currentNodes) => {
-      const nextId = currentNodes.length;
-      return [...currentNodes, { id: nextId, ...position }];
-    });
-    setRouteResult(null);
-    setError('');
-  }
-
-  function handleCreateEdge(from, to) {
-    const weightInput = window.prompt(`Set edge weight for ${from} -> ${to}`, '1');
-
-    if (weightInput === null) {
-      return;
-    }
-
-    const parsedWeight = Number.parseInt(weightInput, 10);
-
-    if (!Number.isInteger(parsedWeight) || parsedWeight <= 0) {
-      window.alert('Weight must be a positive integer.');
-      return;
-    }
-
-    const edgeId = createEdgeId(from, to);
-
-    setEdges((currentEdges) => {
-      const existingIndex = currentEdges.findIndex((edge) => edge.id === edgeId);
-      const nextEdge = { id: edgeId, from, to, weight: parsedWeight };
-
-      if (existingIndex >= 0) {
-        const updatedEdges = [...currentEdges];
-        updatedEdges[existingIndex] = nextEdge;
-        return updatedEdges;
-      }
-
-      return [...currentEdges, nextEdge];
-    });
-
-    setRouteResult(null);
-    setError('');
-  }
+  useRouteAnimator();
 
   async function handleForgeRoute() {
     if (nodes.length < 2) {
@@ -78,25 +27,25 @@ export default function App() {
       return;
     }
 
-    if (source === '' || destination === '') {
+    if (!sourceId || !destinationId) {
       setError('Select both a source and a destination node.');
       return;
     }
+
+    const { payload, vertexIdByIndex } = buildRouteRequest({
+      nodes,
+      edges,
+      sourceId,
+      destinationId,
+      algorithm
+    });
 
     setLoading(true);
     setError('');
 
     try {
-      const response = await forgeRoute({
-        vertices: nodes.length,
-        edges: edges.map((edge) => [edge.from, edge.to, edge.weight]),
-        source: Number(source),
-        destination: Number(destination),
-        algorithm,
-        undirected: true
-      });
-
-      setRouteResult(response);
+      const response = await forgeRoute(payload);
+      setRouteResult(mapRouteResponse(response, vertexIdByIndex));
     } catch (requestError) {
       setRouteResult(null);
       setError(requestError.message);
@@ -106,112 +55,40 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
-      <section className="hero">
-        <div>
-          <span className="eyebrow">RouteForge</span>
-          <h1>Sketch a graph. Forge the fastest route.</h1>
-          <p>
-            Build a weighted network directly on the canvas, switch between Dijkstra and A*,
-            then send the graph to the local planner.
-          </p>
-        </div>
-      </section>
-
-      <main className="workspace">
-        <GraphCanvas
-          nodes={nodes}
-          edges={edges}
-          highlightedPath={routeResult?.path ?? []}
-          onAddNode={handleAddNode}
-          onCreateEdge={handleCreateEdge}
-        />
-
-        <aside className="control-panel">
-          <div className="panel-card">
-            <h2>Controls</h2>
-
-            <label>
-              <span>Source node</span>
-              <select value={source} onChange={(event) => setSource(event.target.value)}>
-                <option value="">Select source</option>
-                {nodeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              <span>Destination node</span>
-              <select
-                value={destination}
-                onChange={(event) => setDestination(event.target.value)}
-              >
-                <option value="">Select destination</option>
-                {nodeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="algorithm-toggle" role="radiogroup" aria-label="Routing algorithm">
-              <button
-                type="button"
-                className={algorithm === 'dijkstra' ? 'active' : ''}
-                onClick={() => setAlgorithm('dijkstra')}
-              >
-                Dijkstra
-              </button>
-              <button
-                type="button"
-                className={algorithm === 'astar' ? 'active' : ''}
-                onClick={() => setAlgorithm('astar')}
-              >
-                A*
-              </button>
+    <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_26%),radial-gradient(circle_at_80%_18%,rgba(139,92,246,0.12),transparent_22%),linear-gradient(160deg,#020617_0%,#081120_50%,#02030a_100%)] text-slate-100">
+      <div className="mx-auto flex min-h-screen max-w-[1680px] flex-col px-5 py-5 lg:px-6 lg:py-6">
+        <header className="mb-5 rounded-[32px] border border-white/10 bg-slate-950/55 px-7 py-6 shadow-[0_24px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+          <p className="text-[11px] uppercase tracking-[0.34em] text-cyan-300/80">RouteForge Premium Graph Editor</p>
+          <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h1 className="text-4xl font-semibold tracking-[-0.05em] text-white lg:text-6xl">
+                Build routes like a modern workflow canvas.
+              </h1>
+              <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400 lg:text-base">
+                Drag graph nodes, connect from glowing handles, edit edge weights inline, and animate
+                Dijkstra or A* traversal directly on a polished node-editor surface.
+              </p>
             </div>
-
-            <button type="button" className="forge-button" onClick={handleForgeRoute} disabled={loading}>
-              {loading ? 'Forging...' : 'Forge Route'}
-            </button>
-
-            {error ? <p className="status error">{error}</p> : null}
-          </div>
-
-          <div className="panel-card">
-            <h2>Output</h2>
-            <div className="result-grid">
-              <div>
-                <span className="result-label">Path</span>
-                <strong>{routeResult?.reachable ? formatPath(routeResult.path) : 'Unreachable'}</strong>
-              </div>
-              <div>
-                <span className="result-label">Distance</span>
-                <strong>{routeResult?.reachable ? routeResult.distance : '--'}</strong>
-              </div>
-              <div>
-                <span className="result-label">Nodes visited</span>
-                <strong>
-                  {Array.isArray(routeResult?.nodesVisited)
-                    ? routeResult.nodesVisited.join(', ')
-                    : 'Not provided by backend'}
-                </strong>
-              </div>
+            <div className="rounded-3xl border border-cyan-400/15 bg-cyan-400/8 px-5 py-4 text-sm text-cyan-100 shadow-[0_0_40px_rgba(34,211,238,0.12)]">
+              <p className="font-medium">Tips</p>
+              <p className="mt-1 text-cyan-50/80">
+                Drag from the glowing <span className="font-semibold">+</span> handle to create edges.
+                Use right-mouse drag to pan and mouse wheel to zoom.
+              </p>
             </div>
           </div>
+        </header>
 
-          <div className="panel-card compact">
-            <h2>Graph Snapshot</h2>
-            <p>{nodes.length} nodes</p>
-            <p>{edges.length} edges</p>
-            <p>Mode: undirected</p>
-          </div>
-        </aside>
-      </main>
+        <main className="relative min-h-[760px] flex-1 overflow-hidden rounded-[36px] border border-white/10 bg-slate-950/45 shadow-[0_32px_100px_rgba(0,0,0,0.38)] backdrop-blur-xl">
+          <ReactFlowProvider>
+            <GraphEditor onForgeRoute={handleForgeRoute} />
+          </ReactFlowProvider>
+        </main>
+      </div>
     </div>
   );
+}
+
+export default function App() {
+  return <GraphWorkspace />;
 }
