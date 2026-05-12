@@ -1,8 +1,0 @@
-{
-  "algorithm": "dijkstra",
-  "source": 0,
-  "destination": 5,
-  "distance": 7,
-  "path": [0, 2, 4, 5],
-  "reachable": true
-}
