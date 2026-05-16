@@ -1,6 +1,10 @@
 # RouteForge
 
 A C++-powered graph algorithm visualizer and pathfinding engine with a modern interactive graph editor.
+<img width="1580" height="899" alt="image" src="https://github.com/user-attachments/assets/34014f51-e6a0-4a7f-a7c4-22a9427a452c" />
+<img width="3824" height="1729" alt="image" src="https://github.com/user-attachments/assets/255571b5-2c45-46f7-8df9-122bb84eaa3e" />
+
+
 
 ---
 
