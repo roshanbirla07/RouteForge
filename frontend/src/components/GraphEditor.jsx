@@ -4,7 +4,8 @@ import {
   Controls,
   MiniMap,
   ReactFlow,
-  useReactFlow
+  useReactFlow,
+  useViewport
 } from '@xyflow/react';
 import {
   forceSimulation,
@@ -19,6 +20,7 @@ import { useUIStore } from '../store/useUIStore';
 import ConnectionLine from './ConnectionLine';
 import GraphEdge from './GraphEdge';
 import GraphNode from './GraphNode';
+import { getCircleIntersection, getClosestHandleId, getNodeCenter } from '../utils/graphGeometry';
 
 const nodeTypes = {
   graphNode: GraphNode
@@ -38,14 +40,13 @@ function hasSameItems(left, right) {
 export default function GraphEditor() {
   const wrapperRef = useRef(null);
   const reactFlow = useReactFlow();
+  const viewport = useViewport();
   
   const nodes = useGraphStore((state) => state.nodes);
   const edges = useGraphStore((state) => state.edges);
   const onNodesChange = useGraphStore((state) => state.onNodesChange);
   const onEdgesChange = useGraphStore((state) => state.onEdgesChange);
-  const addNode = useGraphStore((state) => state.addNode);
   const moveNode = useGraphStore((state) => state.moveNode);
-  const createOrUpdateEdge = useGraphStore((state) => state.createOrUpdateEdge);
   const removeNodes = useGraphStore((state) => state.removeNodes);
   const removeEdge = useGraphStore((state) => state.removeEdge);
   const setNodePositions = useGraphStore((state) => state.setNodePositions);
@@ -54,8 +55,52 @@ export default function GraphEditor() {
   const selection = useUIStore((state) => state.selection);
   const setSelection = useUIStore((state) => state.setSelection);
   const setConnectionState = useUIStore((state) => state.setConnectionState);
+  const hoveredNodeId = useUIStore((state) => state.hoveredNodeId);
+  const setHoveredNodeId = useUIStore((state) => state.setHoveredNodeId);
+  const draftConnection = useUIStore((state) => state.draftConnection);
+  const setDraftConnection = useUIStore((state) => state.setDraftConnection);
   const pendingEdge = useUIStore((state) => state.pendingEdge);
   const setPendingEdge = useUIStore((state) => state.setPendingEdge);
+
+  const editorNodes = useMemo(
+    () =>
+      nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          interactionMode,
+          showPorts:
+            interactionMode !== 'delete' &&
+            (hoveredNodeId === node.id ||
+              draftConnection?.sourceId === node.id ||
+              draftConnection?.targetId === node.id),
+          isDraftSource: draftConnection?.sourceId === node.id,
+          isDraftTarget: draftConnection?.targetId === node.id,
+          onHoverChange: (nodeId, isHovered) => {
+            setHoveredNodeId(isHovered ? nodeId : '');
+          },
+          onPortPointerDown: (event, nodeId) => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const nodeRef = nodes.find((item) => item.id === nodeId);
+            if (!nodeRef) return;
+
+            const center = getNodeCenter(nodeRef);
+            setDraftConnection({
+              sourceId: nodeId,
+              sourceX: center.x,
+              sourceY: center.y,
+              currentX: center.x,
+              currentY: center.y,
+              targetId: ''
+            });
+            setConnectionState({ active: true, sourceId: nodeId });
+          }
+        }
+      })),
+    [draftConnection, hoveredNodeId, interactionMode, nodes, setConnectionState, setDraftConnection, setHoveredNodeId]
+  );
 
   const displayEdges = useMemo(() => {
     if (!pendingEdge) return edges;
@@ -72,6 +117,8 @@ export default function GraphEditor() {
         data: { 
           source: pendingEdge.source,
           target: pendingEdge.target,
+          sourceHandle: pendingEdge.sourceHandle,
+          targetHandle: pendingEdge.targetHandle,
           weight: '', 
           isPending: true 
         },
@@ -80,32 +127,120 @@ export default function GraphEditor() {
     ];
   }, [edges, pendingEdge]);
 
-  const handleConnect = useCallback(
-    (params) => {
-      // Guard: if already creating an edge, ignore
-      if (pendingEdge) return;
+  const draftLine = useMemo(() => {
+    if (!draftConnection) return null;
 
-      // Validate source and target nodes exist in the current graph
-      const sourceExists = nodes.some((n) => n.id === params.source);
-      const targetExists = nodes.some((n) => n.id === params.target);
-      
-      if (!sourceExists || !targetExists) return;
+    const sourceNode = nodes.find((node) => node.id === draftConnection.sourceId);
+    const sourceCenter = sourceNode
+      ? getNodeCenter(sourceNode)
+      : { x: draftConnection.sourceX, y: draftConnection.sourceY };
 
-      // Set the transient pending edge state instead of committing to graph store
-      setPendingEdge({
-        source: params.source,
-        target: params.target,
-        sourceHandle: params.sourceHandle,
-        targetHandle: params.targetHandle
+    const startPoint = getCircleIntersection(
+      sourceCenter.x,
+      sourceCenter.y,
+      draftConnection.currentX,
+      draftConnection.currentY
+    );
+
+    let endPoint = {
+      x: draftConnection.currentX,
+      y: draftConnection.currentY
+    };
+
+    if (draftConnection.targetId) {
+      const targetNode = nodes.find((node) => node.id === draftConnection.targetId);
+      if (targetNode) {
+        const targetCenter = getNodeCenter(targetNode);
+        endPoint = getCircleIntersection(
+          targetCenter.x,
+          targetCenter.y,
+          sourceCenter.x,
+          sourceCenter.y
+        );
+      }
+    }
+
+    return {
+      fromX: startPoint.x,
+      fromY: startPoint.y,
+      toX: endPoint.x,
+      toY: endPoint.y
+    };
+  }, [draftConnection, nodes]);
+
+  const updateDraftTarget = useCallback(
+    (flowPoint) => {
+      if (!draftConnection) return;
+
+      let nearestNode = null;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+
+      nodes.forEach((node) => {
+        if (node.id === draftConnection.sourceId) return;
+
+        const center = getNodeCenter(node);
+        const distance = Math.hypot(center.x - flowPoint.x, center.y - flowPoint.y);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestNode = node;
+        }
       });
 
-      setConnectionState({
-        active: false,
-        sourceId: ''
+      const nextTargetId = nearestDistance < 84 ? nearestNode?.id ?? '' : '';
+      setDraftConnection({
+        ...draftConnection,
+        currentX: flowPoint.x,
+        currentY: flowPoint.y,
+        targetId: nextTargetId
       });
     },
-    [nodes, pendingEdge, setConnectionState, setPendingEdge]
+    [draftConnection, nodes, setDraftConnection]
   );
+
+  useEffect(() => {
+    if (!draftConnection) return undefined;
+
+    function handlePointerMove(event) {
+      const flowPoint = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      updateDraftTarget(flowPoint);
+    }
+
+    function handlePointerUp() {
+      if (draftConnection.targetId && draftConnection.sourceId !== draftConnection.targetId) {
+        const sourceNode = nodes.find((node) => node.id === draftConnection.sourceId);
+        const targetNode = nodes.find((node) => node.id === draftConnection.targetId);
+
+        if (!sourceNode || !targetNode) {
+          setDraftConnection(null);
+          setConnectionState({ active: false, sourceId: '' });
+          setHoveredNodeId('');
+          return;
+        }
+
+        const sourceCenter = getNodeCenter(sourceNode);
+        const targetCenter = getNodeCenter(targetNode);
+
+        setPendingEdge({
+          source: draftConnection.sourceId,
+          target: draftConnection.targetId,
+          sourceHandle: getClosestHandleId(sourceCenter, targetCenter),
+          targetHandle: getClosestHandleId(targetCenter, sourceCenter)
+        });
+      }
+
+      setDraftConnection(null);
+      setConnectionState({ active: false, sourceId: '' });
+      setHoveredNodeId('');
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [draftConnection, reactFlow, setConnectionState, setDraftConnection, setHoveredNodeId, setPendingEdge, updateDraftTarget]);
 
   const handleAutoArrange = useCallback(() => {
     if (!nodes.length) return;
@@ -164,6 +299,8 @@ export default function GraphEditor() {
     function handleDeleteSelection(event) {
       if (event.key === 'Escape') {
         setConnectionState({ active: false, sourceId: '' });
+        setDraftConnection(null);
+        setPendingEdge(null);
         return;
       }
 
@@ -178,30 +315,17 @@ export default function GraphEditor() {
 
     window.addEventListener('keydown', handleDeleteSelection);
     return () => window.removeEventListener('keydown', handleDeleteSelection);
-  }, [removeEdge, removeNodes, selection, setConnectionState]);
+  }, [removeEdge, removeNodes, selection, setConnectionState, setDraftConnection, setPendingEdge]);
 
   return (
-    <div ref={wrapperRef} className="flex-1 relative bg-white">
+    <div ref={wrapperRef} className="graph-editor-shell">
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={editorNodes}
+        edges={displayEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onConnect={handleConnect}
-        onConnectStart={(_, params) =>
-          setConnectionState({
-            active: true,
-            sourceId: params.nodeId ?? ''
-          })
-        }
-        onConnectEnd={() =>
-          setConnectionState({
-            active: false,
-            sourceId: ''
-          })
-        }
         deleteKeyCode={null}
         onNodeClick={(_, node) => {
           if (interactionMode === 'delete') removeNodes([node.id]);
@@ -218,25 +342,41 @@ export default function GraphEditor() {
         minZoom={0.2}
         maxZoom={4}
         defaultViewport={{ x: 0, y: 0, zoom: 0.95 }}
+        panOnScroll
+        zoomOnDoubleClick={false}
+        zoomActivationKeyCode={['Meta', 'Control']}
         selectionOnDrag
         multiSelectionKeyCode={['Meta', 'Control']}
         panOnDrag={[2]}
         selectionMode="partial"
         nodesDraggable={interactionMode !== 'connect'}
         elementsSelectable={interactionMode !== 'delete'}
-        nodesConnectable={interactionMode !== 'delete'}
+        nodesConnectable={false}
         connectOnClick={false}
         connectionMode="loose"
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={20} size={1} color="#e2e8f0" variant={BackgroundVariant.Lines} />
+        <Background gap={72} size={1} color="#1e293b" variant={BackgroundVariant.Lines} />
+        <Background gap={18} size={1} color="#0f172a" variant={BackgroundVariant.Dots} />
         <MiniMap
           pannable
           zoomable
-          className="!bottom-4 !right-4 !border-slate-200 !bg-white/80 !shadow-sm"
+          className="graph-minimap"
         />
-        <Controls className="!bottom-4 !left-4 !border-slate-200 !bg-white/80 !shadow-sm" showInteractive={false} />
+        <Controls className="graph-controls" showInteractive={false} />
       </ReactFlow>
+
+      {draftLine && (
+        <svg
+          className="draft-connection-overlay"
+          style={{
+            transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+            transformOrigin: '0 0'
+          }}
+        >
+          <ConnectionLine {...draftLine} />
+        </svg>
+      )}
     </div>
   );
 }

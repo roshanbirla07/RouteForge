@@ -1,20 +1,14 @@
-import React, { memo, useState } from 'react';
+import React, { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { useAlgorithmStore } from '../store/useAlgorithmStore';
 import { usePlaybackStore } from '../store/usePlaybackStore';
-import { useUIStore } from '../store/useUIStore';
+import { CARDINAL_HANDLES, getPortOffset } from '../utils/graphGeometry';
 
-const HANDLE_POSITIONS = [
-  { pos: Position.Top, id: 't' },
-  { pos: Position.Right, id: 'r' },
-  { pos: Position.Bottom, id: 'b' },
-  { pos: Position.Left, id: 'l' }
-];
+const PORTS = new Array(4).fill(null);
 
 function GraphNode({ id, data, selected }) {
   const sourceId = useAlgorithmStore((state) => state.sourceId);
   const destinationId = useAlgorithmStore((state) => state.destinationId);
-  const interactionMode = useUIStore((state) => state.interactionMode);
   
   const visitedNodeIds = usePlaybackStore((state) => state.visitedNodeIds);
   const pathNodeIds = usePlaybackStore((state) => state.pathNodeIds);
@@ -24,35 +18,54 @@ function GraphNode({ id, data, selected }) {
   const isVisited = visitedNodeIds.includes(id);
   const isPathNode = pathNodeIds.includes(id);
 
-  const [isHovered, setIsHovered] = useState(false);
-
   return (
     <div 
       className={`relative group ${selected ? 'node-selected' : ''} ${isSource ? 'node-source' : ''} ${isDestination ? 'node-destination' : ''} ${isVisited ? 'node-visited' : ''} ${isPathNode ? 'node-path' : ''}`}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseEnter={() => data.onHoverChange?.(id, true)}
+      onMouseLeave={() => data.onHoverChange?.(id, false)}
     >
-      {/* Circumference Handles (both Source and Target for each position) */}
-      {interactionMode !== 'delete' && HANDLE_POSITIONS.map(({ pos, id: posId }) => (
-        <React.Fragment key={posId}>
-          <Handle
-            type="target"
-            position={pos}
-            id={`target-${posId}`}
-            className={`!w-3 !h-3 !bg-blue-500 !border-2 !border-white !shadow-sm transition-opacity duration-200 ${isHovered || interactionMode === 'connect' ? 'opacity-100' : 'opacity-0'}`}
-          />
+      {CARDINAL_HANDLES.map((handle) => (
+        <React.Fragment key={`${id}-${handle.id}`}>
           <Handle
             type="source"
-            position={pos}
-            id={`source-${posId}`}
-            className={`!w-3 !h-3 !bg-blue-500 !border-2 !border-white !shadow-sm transition-opacity duration-200 ${isHovered || interactionMode === 'connect' ? 'opacity-100' : 'opacity-0'}`}
+            id={handle.id}
+            position={Position[handle.position.charAt(0).toUpperCase() + handle.position.slice(1)]}
+            className="node-handle-ghost"
+          />
+          <Handle
+            type="target"
+            id={handle.id}
+            position={Position[handle.position.charAt(0).toUpperCase() + handle.position.slice(1)]}
+            className="node-handle-ghost"
           />
         </React.Fragment>
       ))}
 
-      <div className="node-minimal">
-        {data.nodeNumber}
+      <div className={`node-shell ${data.isDraftSource ? 'is-draft-source' : ''} ${data.isDraftTarget ? 'is-draft-target' : ''}`}>
+        <div className="node-ring" />
+        <div className="node-minimal">
+          {data.nodeNumber}
+        </div>
       </div>
+
+      {data.showPorts && data.interactionMode !== 'delete' && PORTS.map((_, index) => {
+        const offset = getPortOffset(index);
+
+        return (
+          <button
+            key={`${id}-port-${index}`}
+            type="button"
+            className="node-port nodrag nopan"
+            style={{
+              transform: `translate(-50%, -50%) translate(${offset.x}px, ${offset.y}px)`
+            }}
+            onPointerDown={(event) => data.onPortPointerDown?.(event, id, index)}
+            aria-label={`Create connection from node ${data.nodeNumber}`}
+          >
+            +
+          </button>
+        );
+      })}
     </div>
   );
 }

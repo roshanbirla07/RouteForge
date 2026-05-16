@@ -1,11 +1,6 @@
 import { MarkerType, applyEdgeChanges, applyNodeChanges } from '@xyflow/react';
 import { create } from 'zustand';
 
-const NODE_WIDTH = 92;
-const NODE_HEIGHT = 92;
-const NODE_SPACING_X = 132;
-const NODE_SPACING_Y = 132;
-
 function normalizeEdgeId(source, target, index) {
   return `edge-${source}-${target}-${index}`;
 }
@@ -22,17 +17,19 @@ function createGraphNode(nodeNumber, position) {
   };
 }
 
-function createGraphEdge(source, target, index, weight = 1) {
+function createGraphEdge(source, target, index, weight = 1, sourceHandle = 'right', targetHandle = 'left') {
   return {
     id: normalizeEdgeId(source, target, index),
     type: 'graphEdge',
     source,
     target,
+    sourceHandle,
+    targetHandle,
     markerEnd: {
       type: MarkerType.ArrowClosed,
-      width: 20,
-      height: 20,
-      color: '#475569'
+      width: 18,
+      height: 18,
+      color: '#7dd3fc'
     },
     data: {
       source,
@@ -109,12 +106,18 @@ export const useGraphStore = create((set, get) => ({
       )
     }));
   },
-  createOrUpdateEdge: (source, target, weight = 1) => {
+  createOrUpdateEdge: (source, target, weight = 1, sourceHandle = 'right', targetHandle = 'left') => {
     if (!source || !target || source === target) return;
 
     set((state) => {
-      const edgeId = normalizeEdgeId(source, target, state.nextEdgeNumber);
-      const newEdge = createGraphEdge(source, target, state.nextEdgeNumber, weight);
+      const newEdge = createGraphEdge(
+        source,
+        target,
+        state.nextEdgeNumber,
+        weight,
+        sourceHandle,
+        targetHandle
+      );
       
       return {
         edges: [...clearSelections(state.edges), { ...newEdge, selected: true }],

@@ -23,7 +23,9 @@ export const useUIStore = create((set) => ({
     active: false,
     sourceId: ''
   },
-  pendingEdge: null, // { source: string, target: string, sourceHandle?: string, targetHandle?: string }
+  hoveredNodeId: '',
+  draftConnection: null,
+  pendingEdge: null, // { source: string, target: string, sourceHandle: string, targetHandle: string }
   
   setInteractionMode: (interactionMode) => set({ interactionMode }),
   setLoading: (loading) => set({ loading }),
@@ -35,6 +37,8 @@ export const useUIStore = create((set) => ({
     return { selection };
   }),
   setConnectionState: (connectionState) => set({ connectionState }),
+  setHoveredNodeId: (hoveredNodeId) => set({ hoveredNodeId }),
+  setDraftConnection: (draftConnection) => set({ draftConnection }),
   setPendingEdge: (pendingEdge) => set({ pendingEdge }),
   
   clearSelection: () => set({
@@ -49,6 +53,9 @@ export const useUIStore = create((set) => ({
     loading: false,
     error: '',
     selection: { nodeIds: [], edgeIds: [] },
-    connectionState: { active: false, sourceId: '' }
+    connectionState: { active: false, sourceId: '' },
+    hoveredNodeId: '',
+    draftConnection: null,
+    pendingEdge: null
   })
 }));
