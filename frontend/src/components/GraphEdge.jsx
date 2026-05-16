@@ -1,9 +1,26 @@
 import { BaseEdge, EdgeLabelRenderer, getBezierPath } from '@xyflow/react';
-import { motion } from 'framer-motion';
-import { useEffect, useState } from 'react';
+import { memo, useState, useEffect } from 'react';
+import { useUIStore } from '../store/useUIStore';
 import { useGraphStore } from '../store/useGraphStore';
+import { usePlaybackStore } from '../store/usePlaybackStore';
 
-export default function GraphEdge({
+const NODE_RADIUS = 46;
+
+// Helper to calculate intersection point of a line with a circle
+function getIntersection(aX, aY, bX, bY, radius) {
+  const dx = bX - aX;
+  const dy = bY - aY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+
+  if (distance === 0) return { x: aX, y: aY };
+
+  return {
+    x: aX + (dx * radius) / distance,
+    y: aY + (dy * radius) / distance
+  };
+}
+
+function GraphEdge({
   id,
   sourceX,
   sourceY,
@@ -15,12 +32,19 @@ export default function GraphEdge({
   data,
   selected
 }) {
-  const interactionMode = useGraphStore((state) => state.interactionMode);
+  const interactionMode = useUIStore((state) => state.interactionMode);
   const removeEdge = useGraphStore((state) => state.removeEdge);
   const updateEdgeWeight = useGraphStore((state) => state.updateEdgeWeight);
-  const routeAnimation = useGraphStore((state) => state.routeAnimation);
+  
+  const pathEdgeIds = usePlaybackStore((state) => state.pathEdgeIds);
+  const energizedEdgeIds = usePlaybackStore((state) => state.energizedEdgeIds);
+
   const [isEditing, setIsEditing] = useState(false);
   const [draftValue, setDraftValue] = useState(String(data?.weight ?? 1));
+
+  const isPathEdge = pathEdgeIds.includes(id);
+  const isEnergized = energizedEdgeIds.includes(id);
+
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -28,10 +52,8 @@ export default function GraphEdge({
     targetY,
     sourcePosition,
     targetPosition,
-    curvature: 0.24
+    curvature: 0.15
   });
-  const isPathEdge = routeAnimation.pathEdgeIds.includes(id);
-  const isEnergized = routeAnimation.energizedEdgeIds?.includes(id);
 
   useEffect(() => {
     setDraftValue(String(data?.weight ?? 1));
@@ -39,116 +61,93 @@ export default function GraphEdge({
 
   function commitWeight() {
     const parsedWeight = Number.parseInt(draftValue, 10);
-
     if (Number.isInteger(parsedWeight) && parsedWeight > 0) {
       updateEdgeWeight(id, parsedWeight);
     } else {
       setDraftValue(String(data?.weight ?? 1));
     }
-
     setIsEditing(false);
   }
 
-  function handleEdgeActivation(event) {
+  function handleEdgeClick(event) {
     event.stopPropagation();
-
     if (interactionMode === 'delete') {
       removeEdge(id);
       return;
     }
-
     setIsEditing(true);
   }
 
   return (
     <>
-      <motion.path
-        d={edgePath}
-        fill="none"
-        className={[
-          'route-edge-glow',
-          selected ? 'route-edge-selected' : '',
-          isPathEdge ? 'route-edge-active' : '',
-          isEnergized ? 'route-edge-energized' : ''
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        strokeLinecap="round"
-        initial={false}
-        animate={{ opacity: isPathEdge ? [0.4, 1, 0.4] : 0.74 }}
-        transition={{ duration: 1.25, repeat: isPathEdge ? Infinity : 0, ease: 'easeInOut' }}
-      />
-      <motion.path
-        d={edgePath}
-        fill="none"
-        className={isEnergized ? 'route-edge-flow' : 'route-edge-flow route-edge-flow-hidden'}
-        strokeLinecap="round"
-        initial={false}
-        animate={{ strokeDashoffset: [0, -48], opacity: isEnergized ? [0.4, 1, 0.4] : 0 }}
-        transition={{ duration: 1, repeat: isEnergized ? Infinity : 0, ease: 'linear' }}
-      />
       <BaseEdge
         path={edgePath}
         markerEnd={markerEnd}
-        className={[
-          'route-edge-core',
-          selected ? 'route-edge-selected' : '',
-          isPathEdge ? 'route-edge-active' : '',
-          isEnergized ? 'route-edge-energized' : ''
-        ]
-          .filter(Boolean)
-          .join(' ')}
+        className={`route-edge-core ${selected ? 'selected' : ''} ${isPathEdge ? 'route-edge-active' : ''}`}
+        style={{
+          stroke: isPathEdge ? '#eab308' : selected ? '#3b82f6' : '#94a3b8',
+          strokeWidth: isPathEdge || selected ? 3 : 2,
+          transition: 'stroke 0.2s, stroke-width 0.2s'
+        }}
       />
+      
+      {isEnergized && (
+        <path
+          d={edgePath}
+          fill="none"
+          className="edge-active"
+          stroke="#3b82f6"
+        />
+      )}
+
+      {/* Invisible wider path for easier clicking */}
       <path
         d={edgePath}
         fill="none"
         stroke="transparent"
-        strokeWidth="26"
+        strokeWidth="20"
         className="cursor-pointer"
-        onClick={handleEdgeActivation}
+        onClick={handleEdgeClick}
       />
 
       <EdgeLabelRenderer>
         <div
           className="nodrag nopan absolute"
           style={{
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            pointerEvents: 'all'
           }}
         >
           {isEditing && interactionMode !== 'delete' ? (
             <input
               autoFocus
               value={draftValue}
-              onChange={(event) => setDraftValue(event.target.value)}
+              onChange={(e) => setDraftValue(e.target.value)}
               onBlur={commitWeight}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  commitWeight();
-                }
-
-                if (event.key === 'Escape') {
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitWeight();
+                if (e.key === 'Escape') {
                   setDraftValue(String(data?.weight ?? 1));
                   setIsEditing(false);
                 }
               }}
-              className="w-16 rounded-full border border-cyan-300/40 bg-slate-950/95 px-3 py-1.5 text-center text-xs font-semibold text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.25)] outline-none"
+              className="w-12 h-7 bg-white border-2 border-blue-500 rounded shadow-lg text-center text-xs font-bold outline-none"
             />
           ) : (
-            <button
-              type="button"
-              onClick={handleEdgeActivation}
-              className={[
-                'rounded-full border border-white/10 bg-slate-950/92 px-2.5 py-1 text-[11px] font-semibold text-slate-100 shadow-[0_10px_28px_rgba(0,0,0,0.35)] transition-all duration-200',
-                isPathEdge ? 'border-cyan-300/50 text-cyan-100 shadow-[0_0_26px_rgba(56,189,248,0.24)]' : ''
-              ]
-                .filter(Boolean)
-                .join(' ')}
+            <div
+              onClick={handleEdgeClick}
+              className={`
+                px-2 py-0.5 bg-white border border-slate-200 rounded-full text-[10px] font-bold shadow-sm cursor-pointer hover:border-slate-400 transition-colors
+                ${isPathEdge ? 'border-yellow-400 text-yellow-700 bg-yellow-50' : 'text-slate-600'}
+              `}
             >
               {data?.weight ?? 1}
-            </button>
+            </div>
           )}
         </div>
       </EdgeLabelRenderer>
     </>
   );
 }
+
+export default memo(GraphEdge);

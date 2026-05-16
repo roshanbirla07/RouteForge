@@ -1,3 +1,4 @@
+const SUPPORTED_ALGORITHMS = new Set(['dijkstra', 'astar']);
 const { runRoutePlanner } = require('../services/routeService');
 
 async function createRoute(req, res, next) {
@@ -22,8 +23,8 @@ async function createRoute(req, res, next) {
       throw error;
     }
 
-    if (!['dijkstra', 'astar'].includes(algorithm)) {
-      const error = new Error('algorithm must be either "dijkstra" or "astar"');
+    if (!SUPPORTED_ALGORITHMS.has(algorithm)) {
+      const error = new Error(`algorithm must be one of: ${Array.from(SUPPORTED_ALGORITHMS).join(', ')}`);
       error.statusCode = 400;
       throw error;
     }

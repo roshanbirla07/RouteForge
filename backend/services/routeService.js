@@ -19,9 +19,10 @@ const execAsync = (command, options) =>
 const projectRoot = path.resolve(__dirname, '..', '..');
 const engineRoot = path.join(projectRoot, 'cpp-engine');
 const inputFilePath = path.join(engineRoot, 'input', 'input.json');
-const resultFilePath = path.join(engineRoot, 'output', 'result.json');
 const buildDirectory = path.join(engineRoot, 'build');
+const resultFilePath = path.join(buildDirectory, 'result.json');
 const binaryPath = path.join(buildDirectory, process.platform === 'win32' ? 'route_planner.exe' : 'route_planner');
+const supportedAlgorithms = new Set(['dijkstra', 'astar']);
 
 function createValidationError(message) {
   const error = new Error(message);
@@ -73,8 +74,8 @@ async function runRoutePlanner({
     throw createValidationError('source and destination must be within the vertices range');
   }
 
-  if (!['dijkstra', 'astar'].includes(algorithm)) {
-    throw createValidationError('algorithm must be either "dijkstra" or "astar"');
+  if (!supportedAlgorithms.has(algorithm)) {
+    throw createValidationError(`algorithm must be one of: ${Array.from(supportedAlgorithms).join(', ')}`);
   }
 
   if (typeof undirected !== 'boolean') {

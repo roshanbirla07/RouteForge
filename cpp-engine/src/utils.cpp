@@ -1,15 +1,18 @@
 #include "graph.h"
+#include "execution.h"
 
 #include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 using std::ofstream;
 using std::ostream;
 using std::ostringstream;
+using std::runtime_error;
 using std::string;
 using std::vector;
 
@@ -48,23 +51,92 @@ string pathToJson(const vector<int>& path) {
     return out.str();
 }
 
-string resultToJson(const string& algorithm, int source, int destination, const PathResult& result) {
+string eventFieldsToJson(const vector<EventField>& fields) {
+    ostringstream out;
+    out << "{";
+
+    for (int i = 0; i < static_cast<int>(fields.size()); ++i) {
+        if (i > 0) {
+            out << ", ";
+        }
+
+        out << "\"" << fields[i].key << "\": ";
+        if (fields[i].is_string) {
+            out << "\"" << fields[i].value << "\"";
+        } else {
+            out << fields[i].value;
+        }
+    }
+
+    out << "}";
+    return out.str();
+}
+
+string eventsToJson(const vector<AlgorithmEvent>& events) {
+    ostringstream out;
+    out << "[";
+
+    for (int i = 0; i < static_cast<int>(events.size()); ++i) {
+        if (i > 0) {
+            out << ", ";
+        }
+
+        out << "{";
+        out << "\"type\": \"" << events[i].type << "\"";
+
+        if (!events[i].fields.empty()) {
+            out << ", \"payload\": " << eventFieldsToJson(events[i].fields);
+        }
+
+        out << "}";
+    }
+
+    out << "]";
+    return out.str();
+}
+
+string framesToJson(const vector<TimelineFrame>& frames) {
+    ostringstream out;
+    out << "[";
+
+    for (int i = 0; i < static_cast<int>(frames.size()); ++i) {
+        if (i > 0) {
+            out << ", ";
+        }
+
+        out << "{";
+        out << "\"visited\": " << pathToJson(frames[i].visited) << ", ";
+        out << "\"active\": " << pathToJson(frames[i].active) << ", ";
+        out << "\"queue\": " << pathToJson(frames[i].queue);
+        out << "}";
+    }
+
+    out << "]";
+    return out.str();
+}
+
+string resultToJson(const ExecutionResult& result) {
     ostringstream out;
     out << "{\n";
-    out << "  \"algorithm\": \"" << algorithm << "\",\n";
-    out << "  \"source\": " << source << ",\n";
-    out << "  \"destination\": " << destination << ",\n";
+    out << "  \"algorithm\": \"" << result.algorithm << "\",\n";
+    out << "  \"source\": " << result.source << ",\n";
+    out << "  \"destination\": " << result.destination << ",\n";
     out << "  \"distance\": ";
 
-    if (result.reachable()) {
-        out << result.distance;
+    if (result.path_result.reachable()) {
+        out << result.path_result.distance;
     } else {
         out << "null";
     }
 
     out << ",\n";
-    out << "  \"path\": " << pathToJson(result.nodes) << ",\n";
-    out << "  \"reachable\": " << (result.reachable() ? "true" : "false") << "\n";
+    out << "  \"path\": " << pathToJson(result.path_result.nodes) << ",\n";
+    out << "  \"reachable\": " << (result.path_result.reachable() ? "true" : "false") << ",\n";
+    out << "  \"nodesVisited\": " << pathToJson(result.nodes_visited) << ",\n";
+    out << "  \"timeline\": {\n";
+    out << "    \"events\": " << eventsToJson(result.timeline.events) << ",\n";
+    out << "    \"frames\": " << framesToJson(result.timeline.frames) << "\n";
+    out << "  }\n";
     out << "}\n";
     return out.str();
 }
@@ -90,12 +162,16 @@ void printResult(ostream& out, const string& algorithm, const PathResult& result
     out << '\n';
 }
 
-void writeResultFile(
-    const string& output_path,
-    const string& algorithm,
-    int source,
-    int destination,
-    const PathResult& result) {
+void writeResultFile(const string& output_path, const ExecutionResult& result) {
     ofstream output(output_path);
-    output << resultToJson(algorithm, source, destination, result);
+    if (!output) {
+        throw runtime_error("Failed to open output file: " + output_path);
+    }
+
+    output << resultToJson(result);
+    output.flush();
+
+    if (!output) {
+        throw runtime_error("Failed to write output file: " + output_path);
+    }
 }

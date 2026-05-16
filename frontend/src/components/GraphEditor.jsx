@@ -6,14 +6,19 @@ import {
   ReactFlow,
   useReactFlow
 } from '@xyflow/react';
-import dagre from 'dagre';
+import {
+  forceSimulation,
+  forceLink,
+  forceManyBody,
+  forceX,
+  forceY
+} from 'd3-force';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useGraphStore } from '../store/useGraphStore';
+import { useUIStore } from '../store/useUIStore';
 import ConnectionLine from './ConnectionLine';
 import GraphEdge from './GraphEdge';
 import GraphNode from './GraphNode';
-import InspectorPanel from './InspectorPanel';
-import Toolbar from './Toolbar';
 
 const nodeTypes = {
   graphNode: GraphNode
@@ -22,30 +27,20 @@ const nodeTypes = {
 const edgeTypes = {
   graphEdge: GraphEdge
 };
-const LAYOUT_NODE_WIDTH = 92;
-const LAYOUT_NODE_HEIGHT = 92;
 
 function hasSameItems(left, right) {
   if (left.length !== right.length) {
     return false;
   }
-
   return left.every((item, index) => item === right[index]);
 }
 
-export default function GraphEditor({ onForgeRoute }) {
+export default function GraphEditor() {
   const wrapperRef = useRef(null);
   const reactFlow = useReactFlow();
+  
   const nodes = useGraphStore((state) => state.nodes);
   const edges = useGraphStore((state) => state.edges);
-  const sourceId = useGraphStore((state) => state.sourceId);
-  const destinationId = useGraphStore((state) => state.destinationId);
-  const algorithm = useGraphStore((state) => state.algorithm);
-  const interactionMode = useGraphStore((state) => state.interactionMode);
-  const loading = useGraphStore((state) => state.loading);
-  const error = useGraphStore((state) => state.error);
-  const selection = useGraphStore((state) => state.selection);
-  const routeResult = useGraphStore((state) => state.routeResult);
   const onNodesChange = useGraphStore((state) => state.onNodesChange);
   const onEdgesChange = useGraphStore((state) => state.onEdgesChange);
   const addNode = useGraphStore((state) => state.addNode);
@@ -53,96 +48,96 @@ export default function GraphEditor({ onForgeRoute }) {
   const createOrUpdateEdge = useGraphStore((state) => state.createOrUpdateEdge);
   const removeNodes = useGraphStore((state) => state.removeNodes);
   const removeEdge = useGraphStore((state) => state.removeEdge);
-  const clearGraph = useGraphStore((state) => state.clearGraph);
   const setNodePositions = useGraphStore((state) => state.setNodePositions);
-  const setInteractionMode = useGraphStore((state) => state.setInteractionMode);
-  const setSourceId = useGraphStore((state) => state.setSourceId);
-  const setDestinationId = useGraphStore((state) => state.setDestinationId);
-  const setAlgorithm = useGraphStore((state) => state.setAlgorithm);
-  const setSelection = useGraphStore((state) => state.setSelection);
-  const setConnectionState = useGraphStore((state) => state.setConnectionState);
 
-  const nodeOptions = useMemo(
-    () =>
-      nodes
-        .slice()
-        .sort((left, right) => (left.data?.nodeNumber ?? 0) - (right.data?.nodeNumber ?? 0))
-        .map((node) => ({
-          value: node.id,
-          label: node.data?.label ?? node.id
-        })),
-    [nodes]
-  );
+  const interactionMode = useUIStore((state) => state.interactionMode);
+  const selection = useUIStore((state) => state.selection);
+  const setSelection = useUIStore((state) => state.setSelection);
+  const setConnectionState = useUIStore((state) => state.setConnectionState);
+  const pendingEdge = useUIStore((state) => state.pendingEdge);
+  const setPendingEdge = useUIStore((state) => state.setPendingEdge);
 
-  const handleAddNode = useCallback(() => {
-    if (!wrapperRef.current) {
-      return;
-    }
+  const displayEdges = useMemo(() => {
+    if (!pendingEdge) return edges;
 
-    const bounds = wrapperRef.current.getBoundingClientRect();
-    const centerPoint = reactFlow.screenToFlowPosition({
-      x: bounds.left + bounds.width / 2,
-      y: bounds.top + bounds.height / 2
-    });
-
-    addNode(centerPoint);
-  }, [addNode, reactFlow]);
+    return [
+      ...edges,
+      {
+        id: 'pending-edge',
+        source: pendingEdge.source,
+        target: pendingEdge.target,
+        sourceHandle: pendingEdge.sourceHandle,
+        targetHandle: pendingEdge.targetHandle,
+        type: 'graphEdge',
+        data: { 
+          source: pendingEdge.source,
+          target: pendingEdge.target,
+          weight: '', 
+          isPending: true 
+        },
+        selected: true
+      }
+    ];
+  }, [edges, pendingEdge]);
 
   const handleConnect = useCallback(
-    ({ source, target }) => {
-      createOrUpdateEdge(source, target, 1);
+    (params) => {
+      // Guard: if already creating an edge, ignore
+      if (pendingEdge) return;
+
+      // Validate source and target nodes exist in the current graph
+      const sourceExists = nodes.some((n) => n.id === params.source);
+      const targetExists = nodes.some((n) => n.id === params.target);
+      
+      if (!sourceExists || !targetExists) return;
+
+      // Set the transient pending edge state instead of committing to graph store
+      setPendingEdge({
+        source: params.source,
+        target: params.target,
+        sourceHandle: params.sourceHandle,
+        targetHandle: params.targetHandle
+      });
+
       setConnectionState({
         active: false,
         sourceId: ''
       });
     },
-    [createOrUpdateEdge, setConnectionState]
+    [nodes, pendingEdge, setConnectionState, setPendingEdge]
   );
 
   const handleAutoArrange = useCallback(() => {
-    if (!nodes.length) {
-      return;
-    }
+    if (!nodes.length) return;
 
-    const graph = new dagre.graphlib.Graph();
-    graph.setDefaultEdgeLabel(() => ({}));
-    graph.setGraph({
-      rankdir: 'LR',
-      ranksep: 120,
-      nodesep: 90,
-      marginx: 40,
-      marginy: 40
-    });
+    const simulationNodes = nodes.map((node) => ({
+      id: node.id,
+      x: node.position.x,
+      y: node.position.y
+    }));
 
-    nodes.forEach((node) => {
-      graph.setNode(node.id, {
-        width: LAYOUT_NODE_WIDTH,
-        height: LAYOUT_NODE_HEIGHT
-      });
-    });
+    const simulationLinks = edges.map((edge) => ({
+      source: edge.source,
+      target: edge.target
+    }));
 
-    edges.forEach((edge) => {
-      graph.setEdge(edge.source, edge.target);
-    });
+    const simulation = forceSimulation(simulationNodes)
+      .force('link', forceLink(simulationLinks).id((d) => d.id).distance(200))
+      .force('charge', forceManyBody().strength(-1000))
+      .force('x', forceX(0).strength(0.05))
+      .force('y', forceY(0).strength(0.05))
+      .stop();
 
-    dagre.layout(graph);
+    for (let i = 0; i < 300; i++) simulation.tick();
 
     const positionsById = {};
-    nodes.forEach((node) => {
-      const positionedNode = graph.node(node.id);
-
-      positionsById[node.id] = {
-        x: positionedNode.x - LAYOUT_NODE_WIDTH / 2,
-        y: positionedNode.y - LAYOUT_NODE_HEIGHT / 2
-      };
+    simulationNodes.forEach((node) => {
+      positionsById[node.id] = { x: node.x, y: node.y };
     });
 
     setNodePositions(positionsById);
     window.requestAnimationFrame(() => {
-      reactFlow.fitView({
-        padding: 0.22,
-        duration: 600
-      });
+      reactFlow.fitView({ padding: 0.22, duration: 800 });
     });
   }, [edges, nodes, reactFlow, setNodePositions]);
 
@@ -162,75 +157,31 @@ export default function GraphEditor({ onForgeRoute }) {
 
       setSelection(nextSelection);
     },
-    [selection.edgeIds, selection.nodeIds, setSelection]
+    [selection, setSelection]
   );
 
   useEffect(() => {
     function handleDeleteSelection(event) {
       if (event.key === 'Escape') {
-        setConnectionState({
-          active: false,
-          sourceId: ''
-        });
+        setConnectionState({ active: false, sourceId: '' });
         return;
       }
 
-      if (event.key !== 'Delete' && event.key !== 'Backspace') {
-        return;
-      }
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
 
-      if (selection.nodeIds.length) {
-        removeNodes(selection.nodeIds);
-      }
+      // Don't delete if we are in an input
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT') return;
 
-      if (selection.edgeIds.length) {
-        selection.edgeIds.forEach((edgeId) => removeEdge(edgeId));
-      }
+      if (selection.nodeIds.length) removeNodes(selection.nodeIds);
+      if (selection.edgeIds.length) selection.edgeIds.forEach((id) => removeEdge(id));
     }
 
-    function handleContextMenu() {
-      setConnectionState({
-        active: false,
-        sourceId: ''
-      });
-    }
-
-    window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('keydown', handleDeleteSelection);
-
-    return () => {
-      window.removeEventListener('contextmenu', handleContextMenu);
-      window.removeEventListener('keydown', handleDeleteSelection);
-    };
-  }, [removeEdge, removeNodes, selection.edgeIds, selection.nodeIds, setConnectionState]);
+    return () => window.removeEventListener('keydown', handleDeleteSelection);
+  }, [removeEdge, removeNodes, selection, setConnectionState]);
 
   return (
-    <div ref={wrapperRef} className="route-editor-shell">
-      <Toolbar
-        onAddNode={handleAddNode}
-        onAutoArrange={handleAutoArrange}
-        onClearGraph={clearGraph}
-        onForgeRoute={onForgeRoute}
-        onModeChange={setInteractionMode}
-        interactionMode={interactionMode}
-        algorithm={algorithm}
-        onAlgorithmChange={setAlgorithm}
-        loading={loading}
-      />
-
-      <InspectorPanel
-        nodeOptions={nodeOptions}
-        sourceId={sourceId}
-        destinationId={destinationId}
-        onSourceChange={setSourceId}
-        onDestinationChange={setDestinationId}
-        routeResult={routeResult}
-        error={error}
-        selection={selection}
-        nodeCount={nodes.length}
-        edgeCount={edges.length}
-      />
-
+    <div ref={wrapperRef} className="flex-1 relative bg-white">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -253,29 +204,19 @@ export default function GraphEditor({ onForgeRoute }) {
         }
         deleteKeyCode={null}
         onNodeClick={(_, node) => {
-          if (interactionMode === 'delete') {
-            removeNodes([node.id]);
-          }
+          if (interactionMode === 'delete') removeNodes([node.id]);
         }}
         onEdgeClick={(_, edge) => {
-          if (interactionMode === 'delete') {
-            removeEdge(edge.id);
-          }
+          if (interactionMode === 'delete') removeEdge(edge.id);
         }}
         onNodeDragStop={(_, node) => moveNode(node.id, node.position)}
         onSelectionChange={handleSelectionChange}
-        onPaneClick={() =>
-          setSelection({
-            nodeIds: [],
-            edgeIds: []
-          })
-        }
+        onPaneClick={() => setSelection({ nodeIds: [], edgeIds: [] })}
         fitView
         connectionLineComponent={ConnectionLine}
-        snapToGrid
-        snapGrid={[24, 24]}
-        minZoom={0.35}
-        maxZoom={1.8}
+        snapToGrid={false}
+        minZoom={0.2}
+        maxZoom={4}
         defaultViewport={{ x: 0, y: 0, zoom: 0.95 }}
         selectionOnDrag
         multiSelectionKeyCode={['Meta', 'Control']}
@@ -285,18 +226,16 @@ export default function GraphEditor({ onForgeRoute }) {
         elementsSelectable={interactionMode !== 'delete'}
         nodesConnectable={interactionMode !== 'delete'}
         connectOnClick={false}
+        connectionMode="loose"
         proOptions={{ hideAttribution: true }}
       >
-        <Background id="primary-grid" gap={24} size={1} color="rgba(125, 145, 180, 0.16)" variant={BackgroundVariant.Lines} />
-        <Background id="secondary-grid" gap={120} size={1.2} color="rgba(56, 189, 248, 0.12)" variant={BackgroundVariant.Lines} />
+        <Background gap={20} size={1} color="#e2e8f0" variant={BackgroundVariant.Lines} />
         <MiniMap
           pannable
           zoomable
-          className="!bottom-5 !left-5 !h-[120px] !w-[180px] !overflow-hidden !rounded-3xl !border !border-white/10 !bg-slate-950/80 !shadow-[0_24px_70px_rgba(0,0,0,0.35)]"
-          nodeColor={(node) => (node.id === sourceId ? '#22c55e' : node.id === destinationId ? '#fb7185' : '#38bdf8')}
-          maskColor="rgba(2, 6, 23, 0.55)"
+          className="!bottom-4 !right-4 !border-slate-200 !bg-white/80 !shadow-sm"
         />
-        <Controls className="!bottom-5 !right-5 !overflow-hidden !rounded-3xl !border !border-white/10 !bg-slate-950/80 !shadow-[0_24px_70px_rgba(0,0,0,0.35)]" showInteractive={false} />
+        <Controls className="!bottom-4 !left-4 !border-slate-200 !bg-white/80 !shadow-sm" showInteractive={false} />
       </ReactFlow>
     </div>
   );
